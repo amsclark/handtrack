@@ -1,94 +1,73 @@
 import cv2
 import numpy as np
 import pyautogui
+#from pynput.mouse import Button, Controller
 import keyboard
-from dotenv import load_dotenv
+import mediapipe as mp
+import math
 import os
 
-# Load environment variables from .env file
-load_dotenv()
 
-# Get environment variables
-camera_index = int(os.getenv('CAMERA_INDEX'))
-lower_color = np.array([int(os.getenv('LOWER_COLOR_H')), int(os.getenv('LOWER_COLOR_S')), int(os.getenv('LOWER_COLOR_V'))])
-upper_color = np.array([int(os.getenv('UPPER_COLOR_H')), int(os.getenv('UPPER_COLOR_S')), int(os.getenv('UPPER_COLOR_V'))])
-
-# Open the camera
-cap = cv2.VideoCapture(camera_index)
-
-# Get screen size
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+#mouse = Controller()
 screen_width, screen_height = pyautogui.size()
 
-# Center the cursor on start
-pyautogui.moveTo(screen_width // 2, screen_height // 2)
+# Helper function to calculate Euclidean distance
+def calculate_distance(landmark1, landmark2, image_width, image_height):
+    x1, y1 = int(landmark1.x * image_width), int(landmark1.y * image_height)
+    x2, y2 = int(landmark2.x * image_width), int(landmark2.y * image_height)
+    return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
-# disable PyAutoGUI failsafe
-pyautogui.FAILSAFE = False
+cap = cv2.VideoCapture(0)
 
-# Variable to track the state of tracking
-tracking_enabled = False
-handtrack_quit = False
+with mp_hands.Hands(
+        max_num_hands=1,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5) as hands:
 
-def toggle_tracking():
-    global tracking_enabled
-    tracking_enabled = not tracking_enabled
-    print(f"Tracking {'enabled' if tracking_enabled else 'disabled'}")
+        while cap.isOpened():
+            success, image = cap.read()
+            if not success:
+                print("Ignoring empty camera frame.")
 
-# Set up the shortcut key (e.g., 't' key) to toggle tracking
-keyboard.add_hotkey('windows+alt+x', toggle_tracking)
+            
+            image = cv2.cvtColor(cv2.flip(image, 1), cv2.COLOR_BGR2RGB)
+            image.flags.writeable = False
+            results = hands.process(image)
+            
+            image.flags.writeable = True
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
 
-# Sensitivity factor
-#sensitivity = 2.0
+                    # Get coordinates for first knuckle, first finger
+                    landmark_5 = hand_landmarks.landmark[5]
+                    normalized_x, normalized_y = landmark_5.x, landmark_5.y
+                    screen_x = int(normalized_x * screen_width)
+                    screen_y = int(normalized_y * screen_height)
+                    pyautogui.moveTo(screen_x, screen_y)
 
-# Smoothing variables
-prev_x, prev_y = 0, 0
-alpha = 0.5 # smoothing factor
+                    h, w, _ = image.shape
+                    cx, cy = int(landmark_5.x * w), int(landmark_5.y * h)
+                    
+                    cv2.putText(image, f"Landmark 5: ({cx}, {cy}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+                    mp_drawing.draw_landmarks(
+                        image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                    
+                    # Get landmarks for the thumb tip and first fingertip
+                    thumb_tip = hand_landmarks.landmark[4]
+                    index_tip = hand_landmarks.landmark[8]
+                    distance = calculate_distance(thumb_tip, index_tip, w, h)
+                    
+                    threshold = 20
 
-
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
-
-    if tracking_enabled:
-        # Convert the frame to HSV color space
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-
-        # Create a mask for the color
-        mask = cv2.inRange(hsv, lower_color, upper_color)
-
-        # Find contours in the mask
-        contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-        # If contours are found, draw a circle around the largest one and move the cursor
-        if contours:
-            largest_contour = max(contours, key=cv2.contourArea)
-            (x, y), radius = cv2.minEnclosingCircle(largest_contour)
-            center = (int(x), int(y))
-            radius = int(radius)
-            cv2.circle(frame, center, radius, (0, 255, 0), 2)
-
-            # Map the center coordinates to screen coordinates
-            screen_x = int(screen_width * (x / frame.shape[1]))
-            screen_y = int(screen_height * (y / frame.shape[0]))
-
-            # Apply smoothing
-            screen_x = int(alpha * screen_x + (1 - alpha) * prev_x)
-            screen_y = int(alpha * screen_y + (1 - alpha) * prev_y)
-            prev_x, prev_y = screen_x, screen_y
-
-            # Move the cursor
-            pyautogui.moveTo(screen_x, screen_y)
-        else:
-            #Move the cursor to the center of the screen if the dot is not detected
-            pyautogui.moveTo(screen_width // 2, screen_height // 2)
-
-    # Display the frame
-    cv2.imshow('Frame', frame)
-
-    # Break the loop on 'q' key press
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-cap.release()
-cv2.destroyAllWindows()
+                    if distance < threshold:
+                        #mouse.click(Button.left, 1)
+                        pyautogui.click()
+                        gesture_text = "Click"
+                        cv2.putText(image, gesture_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.imshow('MediaPipe Hands', image)
+            if cv2.waitKey(5) & 0xFF == 27:
+                break
+cap.release() 
