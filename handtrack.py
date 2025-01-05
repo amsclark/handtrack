@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 import pyautogui
-#from pynput.mouse import Button, Controller
 import keyboard
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -15,7 +14,10 @@ import time
 pyautogui.FAILSAFE = False
 
 gesture_recognizer_model_path = "gesture_recognizer.task"
+global gesture_active 
+global last_gesture_active
 gesture_active = False
+last_gesture_active = False
 gesture_start_time = None
 dragging = False
 
@@ -26,6 +28,8 @@ CLICK_THRESHOLD = 0.3
 MOTION_THRESHOLD = 7 #adjust based on sensitivity
 SMOOTHING_ALPHA = 0.2 # weight for smoothing
 
+# Mouse sensitivity
+SCALING_FACTOR = 2.0
 
 # Initialize the Kalman filter
 kalman = cv2.KalmanFilter(4, 2)
@@ -51,7 +55,7 @@ cursor_position = None
 # Function to move the cursor in a seperate thread
 def move_cursor():
     while True:
-        if cursor_position: 
+        if gesture_active and cursor_position: 
             pyautogui.moveTo(cursor_position[0], cursor_position[1])
 
 # Load Gesture Recognizer
@@ -77,6 +81,22 @@ def calculate_distance(landmark1, landmark2, image_width, image_height):
     x1, y1 = int(landmark1.x * image_width), int(landmark1.y * image_height)
     x2, y2 = int(landmark2.x * image_width), int(landmark2.y * image_height)
     return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+
+# Function to calculate the scaled position
+def calculate_scaled_position(current_pos, prev_pos, scaling_factor):
+    if prev_pos is None:  # Initialize on the first frame
+        return current_pos
+    delta_x = (current_pos[0] - prev_pos[0]) * scaling_factor
+    delta_y = (current_pos[1] - prev_pos[1]) * scaling_factor
+    return int(prev_pos[0] + delta_x), int(prev_pos[1] + delta_y)
+
+
+# Function to apply scaling directly to raw smoothed coordinates
+def apply_scaling(smoothed_x, smoothed_y, scaling_factor):
+    center_x, center_y = screen_width // 2, screen_height // 2
+    delta_x = (smoothed_x - center_x) * scaling_factor
+    delta_y = (smoothed_y - center_y) * scaling_factor
+    return int(center_x + delta_x), int(center_y + delta_y)
 
 # Stabilization helper functions
 def apply_threshold(current_pos, prev_pos, threshold=MOTION_THRESHOLD):
@@ -112,94 +132,69 @@ with mp_hands.Hands(
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image)
             recognition_result = gesture_recognizer.recognize(mp_image)
 
+            gesture_active = False
+
             if recognition_result.gestures:
                 gesture = recognition_result.gestures[0][0]
                 gesture_name = gesture.category_name
                 print(f"Recognized Gesture: {gesture_name}")
-
-                # Perform actions based on recognized gesture
-                if gesture_name == "Thumbs_Up":
-                    print("Thumbs Up detected!")
-                    # Add any specific action
-                elif gesture_name == "Thumbs_Down":
-                    print("Thumbs Down detected!")
-                    # Add any specific action
-                elif gesture_name == "Fist":
+                if gesture_name == "Closed_Fist":
+                    gesture_active = True
                     print("Fist detected!")
-                    # Add any specific action
                 elif gesture_name == "Victory":
-                    print("Victory detected!")
-                    # Add any specific action
+                    pyautogui.rightClick()
+                elif gesture_name == "Pointing_Up":
+                    pyautogui.click()
 
-            image.flags.writeable = False
-            results = hands.process(image)
-            
+                if gesture_active and not last_gesture_active:
+                    previous_cursor_position = cursor_position
 
-            image.flags.writeable = True
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-            if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-
-                    # Get coordinates for first knuckle, first finger
-                    landmark_5 = hand_landmarks.landmark[5]
-                    normalized_x, normalized_y = landmark_5.x, landmark_5.y
-                    screen_x = int(normalized_x * screen_width)
-                    screen_y = int(normalized_y * screen_height)
-                    
-                    # Kalman filter: Update with new measurement
-                    measurement = np.array([[np.float32(screen_x)], [np.float32(screen_y)]])
-                    kalman.correct(measurement)
-
-                    # Kalman filter: Predict the smoothed position
-                    predicted = kalman.predict()
-                    smoothed_x, smoothed_y = int(predicted[0]), int(predicted[1])
+                last_gesture_active = gesture_active
 
 
-                    # Stabilize cursor movement
-                    stabilized_position = apply_threshold((smoothed_x, smoothed_y), previous_cursor_position)
-                    stabilized_position = smooth_position(stabilized_position, previous_cursor_position)
+                image.flags.writeable = False
+                results = hands.process(image)
+                
+
+                image.flags.writeable = True
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                if results.multi_hand_landmarks:
+                    for hand_landmarks in results.multi_hand_landmarks:
+
+                        # Get coordinates for first knuckle, first finger
+                        landmark_5 = hand_landmarks.landmark[5]
+                        normalized_x, normalized_y = landmark_5.x, landmark_5.y
+                        screen_x = int(normalized_x * screen_width)
+                        screen_y = int(normalized_y * screen_height)
+                        
+                        # Kalman filter: Update with new measurement
+                        measurement = np.array([[np.float32(screen_x)], [np.float32(screen_y)]])
+                        kalman.correct(measurement)
+
+                        # Kalman filter: Predict the smoothed position
+                        predicted = kalman.predict()
+                        smoothed_x, smoothed_y = int(predicted[0]), int(predicted[1])
+
+                        scaled_position = apply_scaling(smoothed_x, smoothed_y, SCALING_FACTOR) 
 
 
-                    # Move the cursor to the smoothed position
-                    # cursor_position = (screen_x, screen_y)
-                    #pyautogui.moveTo(screen_x, screen_y)
-                    #cursor_position = (smoothed_x, smoothed_y)
-                    cursor_position = stabilized_position
-                    previous_cursor_position = stabilized_position
+                        # Stabilize cursor movement
+                        stabilized_position = apply_threshold(scaled_position, previous_cursor_position)
+                        stabilized_position = smooth_position(stabilized_position, previous_cursor_position)
 
-                    h, w, _ = image.shape
-                    cx, cy = int(landmark_5.x * w), int(landmark_5.y * h)
-                    
-                    cv2.putText(image, f"Landmark 5: ({cx}, {cy}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-                    mp_drawing.draw_landmarks(
-                        image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-                    
-                    # Get landmarks for the thumb tip and first fingertip
-                    #thumb_tip = hand_landmarks.landmark[4]
-                    #index_tip = hand_landmarks.landmark[8]
-                    #distance = calculate_distance(thumb_tip, index_tip, w, h)
-                    
-                    #threshold = 40
 
-                    #if distance < threshold:
-                    #    if not gesture_active:
-                    #        gesture_active = True
-                    #        gesture_start_time = time.time()
-                    #    if time.time() - gesture_start_time > CLICK_THRESHOLD and not dragging:
-                    #        pyautogui.mouseDown()
-                    #        dragging = True
-                    #else:
-                    #    if gesture_active:
-                    #        gesture_active = False
-                    #        gesture_duration = time.time() - gesture_start_time
-                    #
-                    #        if dragging:
-                    #            pyautogui.mouseUp()
-                    #            dragging = False
-                    #        elif gesture_duration <= CLICK_THRESHOLD:
-                    #            pyautogui.click()
-                    #            gesture_text = "Click"
-                    #            cv2.putText(image, gesture_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        # Move the cursor to the smoothed position
+                        if gesture_active:
+                            cursor_position = stabilized_position
+                        previous_cursor_position = stabilized_position
+
+                        h, w, _ = image.shape
+                        cx, cy = int(landmark_5.x * w), int(landmark_5.y * h)
+                        
+                        cv2.putText(image, f"Landmark 5: ({cx}, {cy}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+                        mp_drawing.draw_landmarks(
+                            image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                        
             cv2.imshow('MediaPipe Hands', image)
             if cv2.waitKey(5) & 0xFF == 27:
                 break
