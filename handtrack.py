@@ -18,6 +18,9 @@ dragging = False
 # Threshold for distinguishing click and drag
 CLICK_THRESHOLD = 0.3
 
+#threshold for detecting significant motion
+MOTION_THRESHOLD = 7 #adjust based on sensitivity
+SMOOTHING_ALPHA = 0.2 # weight for smoothing
 
 
 # Initialize the Kalman filter
@@ -37,7 +40,7 @@ screen_width, screen_height = pyautogui.size()
 
 frame_counter = 0
 frame_skip = 5
-previous_cursor_position = None
+previous_cursor_position = (screen_width // 2, screen_height // 2)
 
 cursor_position = None
 
@@ -56,6 +59,23 @@ def calculate_distance(landmark1, landmark2, image_width, image_height):
     x1, y1 = int(landmark1.x * image_width), int(landmark1.y * image_height)
     x2, y2 = int(landmark2.x * image_width), int(landmark2.y * image_height)
     return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+
+# Stabilization helper functions
+def apply_threshold(current_pos, prev_pos, threshold=MOTION_THRESHOLD):
+    """Ignores small movements below a certain threshold."""
+    if prev_pos is None:  # If it's the first frame
+        return current_pos
+    dist = np.linalg.norm(np.array(current_pos) - np.array(prev_pos))
+    if dist < threshold:
+        return prev_pos
+    return current_pos
+
+def smooth_position(current_pos, prev_pos, alpha=SMOOTHING_ALPHA):
+    """Applies weighted averaging to smooth motion."""
+    if prev_pos is None:  # If it's the first frame
+        return current_pos
+    return tuple((1 - alpha) * np.array(prev_pos) + alpha * np.array(current_pos))
+
 
 cap = cv2.VideoCapture(0)
 
@@ -93,10 +113,18 @@ with mp_hands.Hands(
                     predicted = kalman.predict()
                     smoothed_x, smoothed_y = int(predicted[0]), int(predicted[1])
 
+
+                    # Stabilize cursor movement
+                    stabilized_position = apply_threshold((smoothed_x, smoothed_y), previous_cursor_position)
+                    stabilized_position = smooth_position(stabilized_position, previous_cursor_position)
+
+
                     # Move the cursor to the smoothed position
                     # cursor_position = (screen_x, screen_y)
                     #pyautogui.moveTo(screen_x, screen_y)
-                    cursor_position = (smoothed_x, smoothed_y)
+                    #cursor_position = (smoothed_x, smoothed_y)
+                    cursor_position = stabilized_position
+                    previous_cursor_position = stabilized_position
 
                     h, w, _ = image.shape
                     cx, cy = int(landmark_5.x * w), int(landmark_5.y * h)
@@ -110,7 +138,7 @@ with mp_hands.Hands(
                     index_tip = hand_landmarks.landmark[8]
                     distance = calculate_distance(thumb_tip, index_tip, w, h)
                     
-                    threshold = 20
+                    threshold = 40
 
                     if distance < threshold:
                         if not gesture_active:
