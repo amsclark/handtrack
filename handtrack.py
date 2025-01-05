@@ -3,9 +3,6 @@ import numpy as np
 import pyautogui
 import keyboard
 import mediapipe as mp
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
-from mediapipe.tasks.python import BaseOptions 
 import math
 import threading
 import os
@@ -13,7 +10,6 @@ import time
 
 pyautogui.FAILSAFE = False
 
-gesture_recognizer_model_path = "gesture_recognizer.task"
 global gesture_active 
 global last_gesture_active
 gesture_active = False
@@ -41,9 +37,11 @@ kalman.transitionMatrix = np.array([[1, 0, 1, 0],
                                     [0, 0, 0, 1]], np.float32)
 kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03
 
+# Initialize MediaPipe hand tracking
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
-#mouse = Controller()
+
+# Set up pyautogui
 screen_width, screen_height = pyautogui.size()
 
 frame_counter = 0
@@ -55,21 +53,9 @@ cursor_position = None
 # Function to move the cursor in a seperate thread
 def move_cursor():
     while True:
-        if gesture_active and cursor_position: 
+        if cursor_position: 
             pyautogui.moveTo(cursor_position[0], cursor_position[1])
 
-# Load Gesture Recognizer
-BaseOptions = python.BaseOptions
-GestureRecognizer = vision.GestureRecognizer
-GestureRecognizerOptions = vision.GestureRecognizerOptions
-VisionRunningMode = mp.tasks.vision.RunningMode
-
-options = GestureRecognizerOptions(
-    base_options=BaseOptions(model_asset_path=gesture_recognizer_model_path),
-    running_mode=VisionRunningMode.IMAGE
-)
-
-gesture_recognizer = GestureRecognizer.create_from_options(options)
 
 
 cursor_thread = threading.Thread(target=move_cursor)
@@ -129,72 +115,66 @@ with mp_hands.Hands(
 
             
             image = cv2.cvtColor(cv2.flip(image, 1), cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image)
-            recognition_result = gesture_recognizer.recognize(mp_image)
-
-            gesture_active = False
-
-            if recognition_result.gestures:
-                gesture = recognition_result.gestures[0][0]
-                gesture_name = gesture.category_name
-                print(f"Recognized Gesture: {gesture_name}")
-                if gesture_name == "Closed_Fist":
-                    gesture_active = True
-                    print("Fist detected!")
-                elif gesture_name == "Victory":
-                    pyautogui.rightClick()
-                elif gesture_name == "Pointing_Up":
-                    pyautogui.click()
-
-                if gesture_active and not last_gesture_active:
-                    previous_cursor_position = cursor_position
-
-                last_gesture_active = gesture_active
 
 
-                image.flags.writeable = False
-                results = hands.process(image)
-                
+            image.flags.writeable = False
+            results = hands.process(image)
+            
 
-                image.flags.writeable = True
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-                if results.multi_hand_landmarks:
-                    for hand_landmarks in results.multi_hand_landmarks:
+            image.flags.writeable = True
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
 
-                        # Get coordinates for first knuckle, first finger
-                        landmark_5 = hand_landmarks.landmark[5]
-                        normalized_x, normalized_y = landmark_5.x, landmark_5.y
-                        screen_x = int(normalized_x * screen_width)
-                        screen_y = int(normalized_y * screen_height)
-                        
-                        # Kalman filter: Update with new measurement
-                        measurement = np.array([[np.float32(screen_x)], [np.float32(screen_y)]])
-                        kalman.correct(measurement)
+                    # Get coordinates for landmarks
+                    landmark_5 = hand_landmarks.landmark[5] # First knuckle, first finger
+                    landmark_4 = hand_landmarks.landmark[4] # thumb tip
+                    landmark_8 = hand_landmarks.landmark[8] # index tip
+                    landmark_12 = hand_landmarks.landmark[12] # middle tip
+                    landmark_16 = hand_landmarks.landmark[16] # ring tip
+                    landmark_20 = hand_landmarks.landmark[20] # pinky tip
+                    h, w, _ = image.shape
+                    dist_thumb_index = round(calculate_distance(landmark_4, landmark_8, w, h), 1)
+                    dist_thumb_middle = round(calculate_distance(landmark_4, landmark_12, w, h), 1)
+                    dist_thumb_ring = round(calculate_distance(landmark_4, landmark_16, w, h), 1)
+                    dist_thumb_pinky = round(calculate_distance(landmark_4, landmark_20, w, h), 1)
+                    
 
-                        # Kalman filter: Predict the smoothed position
-                        predicted = kalman.predict()
-                        smoothed_x, smoothed_y = int(predicted[0]), int(predicted[1])
+                    normalized_x, normalized_y = landmark_5.x, landmark_5.y
+                    screen_x = int(normalized_x * screen_width)
+                    screen_y = int(normalized_y * screen_height)
+                    
+                    # Kalman filter: Update with new measurement
+                    measurement = np.array([[np.float32(screen_x)], [np.float32(screen_y)]])
+                    kalman.correct(measurement)
 
-                        scaled_position = apply_scaling(smoothed_x, smoothed_y, SCALING_FACTOR) 
+                    # Kalman filter: Predict the smoothed position
+                    predicted = kalman.predict()
+                    smoothed_x, smoothed_y = int(predicted[0]), int(predicted[1])
+
+                    scaled_position = apply_scaling(smoothed_x, smoothed_y, SCALING_FACTOR) 
 
 
-                        # Stabilize cursor movement
-                        stabilized_position = apply_threshold(scaled_position, previous_cursor_position)
-                        stabilized_position = smooth_position(stabilized_position, previous_cursor_position)
+                    # Stabilize cursor movement
+                    stabilized_position = apply_threshold(scaled_position, previous_cursor_position)
+                    stabilized_position = smooth_position(stabilized_position, previous_cursor_position)
 
 
-                        # Move the cursor to the smoothed position
-                        if gesture_active:
-                            cursor_position = stabilized_position
-                        previous_cursor_position = stabilized_position
+                    # Move the cursor to the smoothed position
+                    cursor_position = stabilized_position
+                    previous_cursor_position = stabilized_position
 
-                        h, w, _ = image.shape
-                        cx, cy = int(landmark_5.x * w), int(landmark_5.y * h)
-                        
-                        cv2.putText(image, f"Landmark 5: ({cx}, {cy}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-                        mp_drawing.draw_landmarks(
-                            image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-                        
+                    h, w, _ = image.shape
+                    cx, cy = int(landmark_5.x * w), int(landmark_5.y * h)
+                    
+                    cv2.putText(image, f"Landmark 5: ({cx}, {cy})", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+                    cv2.putText(image, f"T<->I Dist: {dist_thumb_index}", (10,60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+                    cv2.putText(image, f"T<->M Dist: {dist_thumb_middle}", (10,90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+                    cv2.putText(image, f"T<->R Dist: {dist_thumb_ring}", (10,120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+                    cv2.putText(image, f"T<->P Dist: {dist_thumb_pinky}", (10,150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+                    mp_drawing.draw_landmarks(
+                        image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                    
             cv2.imshow('MediaPipe Hands', image)
             if cv2.waitKey(5) & 0xFF == 27:
                 break
