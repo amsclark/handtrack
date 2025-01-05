@@ -4,6 +4,9 @@ import pyautogui
 #from pynput.mouse import Button, Controller
 import keyboard
 import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+from mediapipe.tasks.python import BaseOptions 
 import math
 import threading
 import os
@@ -11,6 +14,7 @@ import time
 
 pyautogui.FAILSAFE = False
 
+gesture_recognizer_model_path = "gesture_recognizer.task"
 gesture_active = False
 gesture_start_time = None
 dragging = False
@@ -49,6 +53,20 @@ def move_cursor():
     while True:
         if cursor_position: 
             pyautogui.moveTo(cursor_position[0], cursor_position[1])
+
+# Load Gesture Recognizer
+BaseOptions = python.BaseOptions
+GestureRecognizer = vision.GestureRecognizer
+GestureRecognizerOptions = vision.GestureRecognizerOptions
+VisionRunningMode = mp.tasks.vision.RunningMode
+
+options = GestureRecognizerOptions(
+    base_options=BaseOptions(model_asset_path=gesture_recognizer_model_path),
+    running_mode=VisionRunningMode.IMAGE
+)
+
+gesture_recognizer = GestureRecognizer.create_from_options(options)
+
 
 cursor_thread = threading.Thread(target=move_cursor)
 cursor_thread.daemon = True
@@ -91,9 +109,32 @@ with mp_hands.Hands(
 
             
             image = cv2.cvtColor(cv2.flip(image, 1), cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image)
+            recognition_result = gesture_recognizer.recognize(mp_image)
+
+            if recognition_result.gestures:
+                gesture = recognition_result.gestures[0][0]
+                gesture_name = gesture.category_name
+                print(f"Recognized Gesture: {gesture_name}")
+
+                # Perform actions based on recognized gesture
+                if gesture_name == "Thumbs_Up":
+                    print("Thumbs Up detected!")
+                    # Add any specific action
+                elif gesture_name == "Thumbs_Down":
+                    print("Thumbs Down detected!")
+                    # Add any specific action
+                elif gesture_name == "Fist":
+                    print("Fist detected!")
+                    # Add any specific action
+                elif gesture_name == "Victory":
+                    print("Victory detected!")
+                    # Add any specific action
+
             image.flags.writeable = False
             results = hands.process(image)
             
+
             image.flags.writeable = True
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
             if results.multi_hand_landmarks:
@@ -134,31 +175,31 @@ with mp_hands.Hands(
                         image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
                     
                     # Get landmarks for the thumb tip and first fingertip
-                    thumb_tip = hand_landmarks.landmark[4]
-                    index_tip = hand_landmarks.landmark[8]
-                    distance = calculate_distance(thumb_tip, index_tip, w, h)
+                    #thumb_tip = hand_landmarks.landmark[4]
+                    #index_tip = hand_landmarks.landmark[8]
+                    #distance = calculate_distance(thumb_tip, index_tip, w, h)
                     
-                    threshold = 40
+                    #threshold = 40
 
-                    if distance < threshold:
-                        if not gesture_active:
-                            gesture_active = True
-                            gesture_start_time = time.time()
-                        if time.time() - gesture_start_time > CLICK_THRESHOLD and not dragging:
-                            pyautogui.mouseDown()
-                            dragging = True
-                    else:
-                        if gesture_active:
-                            gesture_active = False
-                            gesture_duration = time.time() - gesture_start_time
-
-                            if dragging:
-                                pyautogui.mouseUp()
-                                dragging = False
-                            elif gesture_duration <= CLICK_THRESHOLD:
-                                pyautogui.click()
-                                gesture_text = "Click"
-                                cv2.putText(image, gesture_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    #if distance < threshold:
+                    #    if not gesture_active:
+                    #        gesture_active = True
+                    #        gesture_start_time = time.time()
+                    #    if time.time() - gesture_start_time > CLICK_THRESHOLD and not dragging:
+                    #        pyautogui.mouseDown()
+                    #        dragging = True
+                    #else:
+                    #    if gesture_active:
+                    #        gesture_active = False
+                    #        gesture_duration = time.time() - gesture_start_time
+                    #
+                    #        if dragging:
+                    #            pyautogui.mouseUp()
+                    #            dragging = False
+                    #        elif gesture_duration <= CLICK_THRESHOLD:
+                    #            pyautogui.click()
+                    #            gesture_text = "Click"
+                    #            cv2.putText(image, gesture_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             cv2.imshow('MediaPipe Hands', image)
             if cv2.waitKey(5) & 0xFF == 27:
                 break
