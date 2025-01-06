@@ -25,7 +25,7 @@ MOTION_THRESHOLD = 7 #adjust based on sensitivity
 SMOOTHING_ALPHA = 0.2 # weight for smoothing
 
 # Mouse sensitivity
-SCALING_FACTOR = 2.0
+SCALING_FACTOR = 8.0
 
 # Initialize the Kalman filter
 kalman = cv2.KalmanFilter(4, 2)
@@ -158,16 +158,20 @@ with mp_hands.Hands(
 
                        # Check if any of the ratios indicate a gesture (e.g., pinch or closed fist)
                     gesture_active = False
-                    if ratios["T->I / PL"] < 0.5:  # Thumb and index close together
+                    if ratios["T->I / PL"] < 0.15 and not gesture_active:  # Thumb and index close together
+                        pyautogui.mouseDown()
                         gesture_active = True
                         print("Pinch gesture detected between Thumb and Index!")
-                    elif ratios["T->M / PL"] < 0.5:  # Thumb and middle close together
+                    elif ratios["T->M / PL"] < 0.15 and not gesture_active:  # Thumb and middle close together
+                        pyautogui.mouseUp()
                         gesture_active = True
                         print("Pinch gesture detected between Thumb and Middle!")
-                    elif ratios["T->R / PL"] < 0.5:  # Thumb and ring close together
+                    elif ratios["T->R / PL"] < 0.15 and not gesture_active:  # Thumb and ring close together
+                        pyautogui.click()
                         gesture_active = True
                         print("Pinch gesture detected between Thumb and Ring!")
-                    elif ratios["T->P / PL"] < 0.5:  # Thumb and pinky close together
+                    elif ratios["T->P / PL"] < 0.15 and not gesture_active:  # Thumb and pinky close together
+                        pyautogui.rightClick()
                         gesture_active = True
                         print("Pinch gesture detected between Thumb and Pinky!")
 
