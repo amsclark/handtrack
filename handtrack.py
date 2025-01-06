@@ -68,6 +68,18 @@ def calculate_distance(landmark1, landmark2, image_width, image_height):
     x2, y2 = int(landmark2.x * image_width), int(landmark2.y * image_height)
     return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
+
+# Helper function to calculate distance ratios
+def calculate_distance_ratios(dist_thumb_index, dist_thumb_middle, dist_thumb_ring, dist_thumb_pinky, palm_length):
+    # Calculate the ratios of distances to thumb-index distance
+    ratios = {
+        "T->I / PL": dist_thumb_index / palm_length if palm_length != 0 else 1,  
+        "T->M / PL": dist_thumb_middle / palm_length if palm_length != 0 else 1,
+        "T->R / PL": dist_thumb_ring / palm_length if palm_length != 0 else 1,
+        "T->P / PL": dist_thumb_pinky / palm_length if palm_length != 0 else 1, 
+    }
+    return ratios
+
 # Function to calculate the scaled position
 def calculate_scaled_position(current_pos, prev_pos, scaling_factor):
     if prev_pos is None:  # Initialize on the first frame
@@ -127,6 +139,7 @@ with mp_hands.Hands(
                 for hand_landmarks in results.multi_hand_landmarks:
 
                     # Get coordinates for landmarks
+                    landmark_0 = hand_landmarks.landmark[0] # wrist
                     landmark_5 = hand_landmarks.landmark[5] # First knuckle, first finger
                     landmark_4 = hand_landmarks.landmark[4] # thumb tip
                     landmark_8 = hand_landmarks.landmark[8] # index tip
@@ -138,7 +151,25 @@ with mp_hands.Hands(
                     dist_thumb_middle = round(calculate_distance(landmark_4, landmark_12, w, h), 1)
                     dist_thumb_ring = round(calculate_distance(landmark_4, landmark_16, w, h), 1)
                     dist_thumb_pinky = round(calculate_distance(landmark_4, landmark_20, w, h), 1)
-                    
+                    palm_length = round(calculate_distance(landmark_5, landmark_0, w, h),1)
+                
+                    #calculate the finger distance ratios
+                    ratios = calculate_distance_ratios(dist_thumb_index, dist_thumb_middle, dist_thumb_ring, dist_thumb_pinky, palm_length)
+
+                       # Check if any of the ratios indicate a gesture (e.g., pinch or closed fist)
+                    gesture_active = False
+                    if ratios["T->I / PL"] < 0.5:  # Thumb and index close together
+                        gesture_active = True
+                        print("Pinch gesture detected between Thumb and Index!")
+                    elif ratios["T->M / PL"] < 0.5:  # Thumb and middle close together
+                        gesture_active = True
+                        print("Pinch gesture detected between Thumb and Middle!")
+                    elif ratios["T->R / PL"] < 0.5:  # Thumb and ring close together
+                        gesture_active = True
+                        print("Pinch gesture detected between Thumb and Ring!")
+                    elif ratios["T->P / PL"] < 0.5:  # Thumb and pinky close together
+                        gesture_active = True
+                        print("Pinch gesture detected between Thumb and Pinky!")
 
                     normalized_x, normalized_y = landmark_5.x, landmark_5.y
                     screen_x = int(normalized_x * screen_width)
@@ -168,10 +199,10 @@ with mp_hands.Hands(
                     cx, cy = int(landmark_5.x * w), int(landmark_5.y * h)
                     
                     cv2.putText(image, f"Landmark 5: ({cx}, {cy})", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-                    cv2.putText(image, f"T<->I Dist: {dist_thumb_index}", (10,60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-                    cv2.putText(image, f"T<->M Dist: {dist_thumb_middle}", (10,90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-                    cv2.putText(image, f"T<->R Dist: {dist_thumb_ring}", (10,120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-                    cv2.putText(image, f"T<->P Dist: {dist_thumb_pinky}", (10,150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+                    cv2.putText(image, f'ratios[T->I / PL]: {round(ratios["T->I / PL"],2) }', (10,60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+                    cv2.putText(image, f'ratios[T->M / PL]: {round(ratios["T->M / PL"],2) }', (10,90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+                    cv2.putText(image, f'ratio[T->R / PL]: {round(ratios["T->R / PL"], 2) }', (10,120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+                    cv2.putText(image, f'ratio[T->P / PL]: {round(ratios["T->P / PL"], 2)}', (10,150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
                     mp_drawing.draw_landmarks(
                         image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
                     
